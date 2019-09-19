@@ -40,6 +40,8 @@ type Options struct {
 type Migration struct {
 	// ID is the migration identifier. Usually a timestamp like "201601021504".
 	ID string
+	// Description
+	Description string
 	// Migrate is a function that will br executed while running this migration.
 	Migrate MigrateFunc
 	// Rollback will be executed on rollback. Can be nil.
@@ -134,21 +136,33 @@ func (g *Gormigrate) InitSchema(initSchema InitSchemaFunc) {
 // Migrate executes all migrations that did not run yet.
 func (g *Gormigrate) Migrate() error {
 	if !g.hasMigrations() {
+		fmt.Printf("\t\tError: %s\n\n", ErrNoMigrationDefined)
 		return ErrNoMigrationDefined
 	}
 	var targetMigrationID string
 	if len(g.migrations) > 0 {
 		targetMigrationID = g.migrations[len(g.migrations)-1].ID
 	}
-	return g.migrate(targetMigrationID)
+	if err := g.migrate(targetMigrationID); err != nil {
+		fmt.Printf("\tError while migrating: %v\n\n", err)
+		return err
+	}
+	fmt.Printf("\t\tSuccessfully migrated\n\n")
+	return nil
 }
 
 // MigrateTo executes all migrations that did not run yet up to the migration that matches `migrationID`.
 func (g *Gormigrate) MigrateTo(migrationID string) error {
 	if err := g.checkIDExist(migrationID); err != nil {
+		fmt.Printf("\tError while migrating: %v\n\n", err)
 		return err
 	}
-	return g.migrate(migrationID)
+	if err := g.migrate(migrationID); err != nil {
+		fmt.Printf("\tError while migrating: %v\n\n", err)
+		return err
+	}
+	fmt.Printf("\t\tSuccessfully migrated to migration ID %s\n\n", migrationID)
+	return nil
 }
 
 func (g *Gormigrate) migrate(migrationID string) error {
@@ -196,6 +210,7 @@ func (g *Gormigrate) migrate(migrationID string) error {
 
 	for _, migration := range g.migrations {
 		if err := g.runMigration(migration); err != nil {
+			fmt.Printf("\t\tError while applying migration %s : %v\n\n", migration.ID, err)
 			return err
 		}
 		if migrationID != "" && migration.ID == migrationID {
@@ -245,6 +260,7 @@ func (g *Gormigrate) checkIDExist(migrationID string) error {
 // RollbackLast undo the last migration
 func (g *Gormigrate) RollbackLast() error {
 	if len(g.migrations) == 0 {
+		fmt.Printf("\t\tError while rolling back : %v\n\n", ErrNoMigrationDefined)
 		return ErrNoMigrationDefined
 	}
 
@@ -253,23 +269,32 @@ func (g *Gormigrate) RollbackLast() error {
 
 	lastRunMigration, err := g.getLastRunMigration()
 	if err != nil {
+		fmt.Printf("\t\tError while getting last migration : %v\n\n", err)
 		return err
 	}
 
 	if err := g.rollbackMigration(lastRunMigration); err != nil {
+		fmt.Printf("\t\tError while rolling back migration %s : %v\n\n", lastRunMigration.ID, err)
 		return err
 	}
-	return g.commit()
+	if err := g.commit(); err != nil {
+		fmt.Printf("\t\tError while rolling back : %v\n\n", err)
+		return err
+	}
+	fmt.Printf("\t\tSuccessfully rolled back migration ID : %v\n\n", lastRunMigration.ID)
+	return nil
 }
 
 // RollbackTo undoes migrations up to the given migration that matches the `migrationID`.
 // Migration with the matching `migrationID` is not rolled back.
 func (g *Gormigrate) RollbackTo(migrationID string) error {
 	if len(g.migrations) == 0 {
+		fmt.Printf("\t\tError while rolling back : %v\n\n", ErrNoMigrationDefined)
 		return ErrNoMigrationDefined
 	}
 
 	if err := g.checkIDExist(migrationID); err != nil {
+		fmt.Printf("\t\tError while rolling back : %v\n\n", err)
 		return err
 	}
 
@@ -283,15 +308,23 @@ func (g *Gormigrate) RollbackTo(migrationID string) error {
 		}
 		migrationRan, err := g.migrationRan(migration)
 		if err != nil {
+			fmt.Printf("\t\tError while rolling back : %v\n\n", err)
 			return err
 		}
 		if migrationRan {
 			if err := g.rollbackMigration(migration); err != nil {
+				fmt.Printf("\t\tError while rolling back migration %s : %v\n\n", migration.ID, err)
 				return err
 			}
+			fmt.Printf("\t\tMigration ran: %v\n\n", migrationID)
 		}
 	}
-	return g.commit()
+	if err := g.commit(); err != nil {
+		fmt.Printf("\t\tError while rolling back : %v\n\n", err)
+		return err
+	}
+	fmt.Printf("\t\tSuccessfully rolled back to migration ID : %v\n\n", migrationID)
+	return nil
 }
 
 func (g *Gormigrate) getLastRunMigration() (*Migration, error) {
@@ -316,9 +349,16 @@ func (g *Gormigrate) RollbackMigration(m *Migration) error {
 	defer g.rollback()
 
 	if err := g.rollbackMigration(m); err != nil {
+		fmt.Printf("\t\tError while rolling back migration %s : %v\n\n", m.ID, err)
 		return err
 	}
-	return g.commit()
+	if err := g.commit(); err != nil {
+		fmt.Printf("\t\tError while rolling back migration %s : %v\n\n", m.ID, err)
+		return err
+	}
+
+	fmt.Printf("\t\t> Rolled back successfully!\n\n")
+	return nil
 }
 
 func (g *Gormigrate) rollbackMigration(m *Migration) error {
@@ -326,7 +366,13 @@ func (g *Gormigrate) rollbackMigration(m *Migration) error {
 		return ErrRollbackImpossible
 	}
 
+	fmt.Printf(`=====================================`)
+	fmt.Printf("\nRollback Migration\n")
+	fmt.Printf("ID: %s\n", m.ID)
+	fmt.Printf("Description: \"%s\"\n", m.Description)
+	fmt.Printf("=====================================\n")
 	if err := m.Rollback(g.tx); err != nil {
+		fmt.Printf("\t\tError while rolling back migration %s : %v\n\n", m.ID, err)
 		return err
 	}
 
@@ -356,11 +402,18 @@ func (g *Gormigrate) runMigration(migration *Migration) error {
 		return ErrMissingID
 	}
 
+	fmt.Printf(`=====================================`)
+	fmt.Printf("\nMigration\n")
+	fmt.Printf("ID: %s\n", migration.ID)
+	fmt.Printf("Description: \"%s\"\n", migration.Description)
+	fmt.Printf("=====================================\n")
+
 	migrationRan, err := g.migrationRan(migration)
 	if err != nil {
 		return err
 	}
 	if !migrationRan {
+		fmt.Printf("\t> Applying Migration ID %s...\n", migration.ID)
 		if err := migration.Migrate(g.tx); err != nil {
 			return err
 		}
@@ -368,7 +421,11 @@ func (g *Gormigrate) runMigration(migration *Migration) error {
 		if err := g.insertMigration(migration.ID); err != nil {
 			return err
 		}
+		fmt.Printf("\t\t> Migration ID %s has been successfully applied!\n", migration.ID)
+	} else {
+		fmt.Printf("\t> Migration ID %s already applied\n", migration.ID)
 	}
+	fmt.Printf("\n\n")
 	return nil
 }
 
